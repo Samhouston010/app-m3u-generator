@@ -1,0 +1,54 @@
+name: Update GEM TV Playlist
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-gem:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Persian playlist and extract GEM channels
+        run: |
+          curl -sL "https://iptv-org.github.io/iptv/languages/fas.m3u" -o /tmp/farsi_all.m3u
+
+          echo '#EXTM3U' > playlists/gem_tv.m3u
+          echo '' >> playlists/gem_tv.m3u
+
+          # Extract all GEM channels (case insensitive)
+          awk 'BEGIN{IGNORECASE=1} /^#EXTINF.*GEM/{print; getline; print; print ""}' /tmp/farsi_all.m3u >> playlists/gem_tv.m3u
+
+          echo "Found $(grep -c '#EXTINF' playlists/gem_tv.m3u) GEM channels"
+
+      - name: Verify streams are alive
+        run: |
+          echo "--- Stream Check ---"
+          while IFS= read -r line; do
+            if [[ "$line" == http* ]]; then
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 "$line" 2>/dev/null || echo "000")
+              if [[ "$code" == "200" || "$code" == "302" ]]; then
+                echo "✓ OK ($code): ${line:0:60}..."
+              else
+                echo "✗ DEAD ($code): ${line:0:60}..."
+              fi
+            fi
+          done < playlists/gem_tv.m3u
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add playlists/gem_tv.m3u
+          if [ -n "$(git status --porcelain playlists/gem_tv.m3u)" ]; then
+            git commit -m "🔄 Auto-update GEM TV playlist from iptv-org"
+            git push origin main
+          else
+            echo "No changes."
+          fi
